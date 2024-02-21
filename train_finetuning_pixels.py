@@ -104,36 +104,54 @@ def main(_):
             camera_id=camera_id,
         )
 
-    env = gym.make(FLAGS.env_name)
-    env, pixel_keys = wrap(env)
+    # env = gym.make(FLAGS.env_name) # ORIGINAL
+    from viperx_sim import env_reg # VIPER
+    env = env_reg.make_reach_task_env()
+    # END CHANGES
+
+    # env, pixel_keys = wrap(env) # ORIGINAL
+    pixel_keys = ('camera_0',) # VIPER
+    mlp_keys = ('end_effector_positions', 'joint_positions') # VIPER
+
     env = gym.wrappers.RecordEpisodeStatistics(env, deque_size=1)
     if FLAGS.save_video:
         env = WANDBVideo(env)
     env.seed(FLAGS.seed)
 
-    ds = VD4RLDataset(
-        env,
-        FLAGS.dataset_level,
-        pixel_keys=pixel_keys,
-        capacity=FLAGS.dataset_size,
-        dataset_path=FLAGS.dataset_path,
-    )
-    ds_iterator = ds.get_iterator(
-        sample_args={
-            "batch_size": int(FLAGS.batch_size * FLAGS.utd_ratio * FLAGS.offline_ratio),
-            "pack_obs_and_next_obs": True,
-        }
-    )
+    # ds = VD4RLDataset( # ORIGINAL
+    #     env,
+    #     FLAGS.dataset_level,
+    #     pixel_keys=pixel_keys,
+    #     capacity=FLAGS.dataset_size,
+    #     dataset_path=FLAGS.dataset_path,
+    # )
+    import pickle # VIPER
+    ds = pickle.load(open('viperx_replaybuffer.pkl', 'rb'))
 
-    eval_env = gym.make(FLAGS.env_name)
-    eval_env, _ = wrap(eval_env)
-    eval_env.seed(FLAGS.seed + 42)
+    if FLAGS.offline_ratio == 0:
+        ds_iterator = None
+    else:
+        ds_iterator = ds.get_iterator(
+            sample_args={
+                "batch_size": int(FLAGS.batch_size * FLAGS.utd_ratio * FLAGS.offline_ratio),
+                "pack_obs_and_next_obs": True,
+            }
+        )
+
+    # eval_env = gym.make(FLAGS.env_name) # ORIGINAL
+    # eval_env, _ = wrap(eval_env)
+    # eval_env.seed(FLAGS.seed + 42)
+    eval_env = env_reg.make_reach_task_env() # VIPER
 
     replay_buffer_size = FLAGS.replay_buffer_size or FLAGS.max_steps // action_repeat
     if FLAGS.memory_efficient_replay_buffer:
         replay_buffer = MemoryEfficientReplayBuffer(
-            env.observation_space, env.action_space, replay_buffer_size
-        )
+            env.observation_space, env.action_space, replay_buffer_size, pixel_keys=pixel_keys
+        ) # VIPER
+
+        # replay_buffer = MemoryEfficientReplayBuffer(
+        #     env.observation_space, env.action_space, replay_buffer_size, pixel_keys=pixel_keys
+        # ) # ORIGINAL
         replay_buffer_iterator = replay_buffer.get_iterator(
             sample_args={
                 "batch_size": int(
@@ -153,7 +171,7 @@ def main(_):
                 ),
             }
         )
-
+    # import ipdb; ipdb.set_trace()
     replay_buffer.seed(FLAGS.seed)
 
     # Crashes on some setups if agent is created before replay buffer.
@@ -164,10 +182,12 @@ def main(_):
         env.observation_space,
         env.action_space,
         pixel_keys=pixel_keys,
+        mlp_keys=mlp_keys,
         **kwargs,
     )
 
     observation, done = env.reset(), False
+    # observation = observation["pixels"]
     for i in tqdm.tqdm(
         range(1, FLAGS.max_steps // action_repeat + 1),
         smoothing=0.1,
@@ -177,13 +197,24 @@ def main(_):
             action = env.action_space.sample()
         else:
             action, agent = agent.sample_actions(observation)
+
+        # import ipdb; ipdb.set_trace()
+        # try:
         next_observation, reward, done, info = env.step(action)
+
+        # except Exception as e:
+        #     print(e)
+        #     print("Error with action: ", action)
+        #     continue
+        # next_observation = next_observation['camera_0']
+        # next_observation = list(next_observation.values())
+        # next_observation = np.array(next_observation.values())
+        # next_observation = next_observation
 
         if not done or "TimeLimit.truncated" in info:
             mask = 1.0
         else:
             mask = 0.0
-
         replay_buffer.insert(
             dict(
                 observations=observation,
@@ -204,8 +235,11 @@ def main(_):
 
         if i >= FLAGS.start_training:
             online_batch = next(replay_buffer_iterator)
-            offline_batch = next(ds_iterator)
-            batch = combine(offline_batch, online_batch)
+            if ds_iterator is not None:
+                offline_batch = next(ds_iterator)
+                batch = combine(offline_batch, online_batch)
+            else:
+                batch = online_batch
             agent, update_info = agent.update(batch, FLAGS.utd_ratio)
 
             if i % FLAGS.log_interval == 0:

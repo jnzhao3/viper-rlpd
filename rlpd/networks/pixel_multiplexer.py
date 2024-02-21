@@ -14,6 +14,7 @@ class PixelMultiplexer(nn.Module):
     latent_dim: int
     stop_gradient: bool = False
     pixel_keys: Tuple[str, ...] = ("pixels",)
+    mlp_keys: Tuple[str, ...] = ()
     depth_keys: Tuple[str, ...] = ()
 
     @nn.compact
@@ -28,7 +29,7 @@ class PixelMultiplexer(nn.Module):
             depth_keys = [None] * len(self.pixel_keys)
         else:
             depth_keys = self.depth_keys
-
+        # import ipdb; ipdb.set_trace()
         xs = []
         for i, (pixel_key, depth_key) in enumerate(zip(self.pixel_keys, depth_keys)):
             x = observations[pixel_key].astype(jnp.float32) / 255.0
@@ -49,7 +50,14 @@ class PixelMultiplexer(nn.Module):
             x = nn.tanh(x)
             xs.append(x)
 
+        # 2024-02-19 CHANGES
+        for mlp_key in self.mlp_keys:
+            # arr = observations[mlp_key][0]
+            arr = observations[mlp_key]
+            xs.append(arr)
+
         x = jnp.concatenate(xs, axis=-1)
+        # import ipdb; ipdb.set_trace();
 
         if "state" in observations:
             y = nn.Dense(self.latent_dim, kernel_init=default_init())(

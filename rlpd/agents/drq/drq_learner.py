@@ -80,6 +80,7 @@ class DrQLearner(SACLearner):
         init_temperature: float = 1.0,
         backup_entropy: bool = True,
         pixel_keys: Tuple[str, ...] = ("pixels",),
+        mlp_keys: Tuple[str, ...] = (),
         depth_keys: Tuple[str, ...] = (),
     ):
         """
@@ -115,6 +116,7 @@ class DrQLearner(SACLearner):
             latent_dim=latent_dim,
             stop_gradient=True,
             pixel_keys=pixel_keys,
+            mlp_keys=mlp_keys, #TODO: change multiplexer code
             depth_keys=depth_keys,
         )
         actor_params = actor_def.init(actor_key, observations)["params"]
@@ -138,6 +140,7 @@ class DrQLearner(SACLearner):
             network_cls=critic_cls,
             latent_dim=latent_dim,
             pixel_keys=pixel_keys,
+            mlp_keys=mlp_keys,
             depth_keys=depth_keys,
         )
         critic_params = critic_def.init(critic_key, observations, actions)["params"]

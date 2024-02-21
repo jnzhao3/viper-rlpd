@@ -24,9 +24,11 @@ class MemoryEfficientReplayBuffer(ReplayBuffer):
         self._num_stack = None
         for pixel_key in self.pixel_keys:
             pixel_obs_space = observation_space.spaces[pixel_key]
+            # import ipdb; ipdb.set_trace()
             if self._num_stack is None:
                 self._num_stack = pixel_obs_space.shape[-1]
             else:
+                # import ipdb; ipdb.set_trace()
                 assert self._num_stack == pixel_obs_space.shape[-1]
             self._unstacked_dim_size = pixel_obs_space.shape[-2]
             low = pixel_obs_space.low[..., 0]
@@ -67,6 +69,7 @@ class MemoryEfficientReplayBuffer(ReplayBuffer):
         next_obs_pixels = {}
         for pixel_key in self.pixel_keys:
             obs_pixels[pixel_key] = data_dict["observations"].pop(pixel_key)
+            # import ipdb; ipdb.set_trace()
             next_obs_pixels[pixel_key] = data_dict["next_observations"].pop(pixel_key)
 
         if self._first:

@@ -15,3 +15,5 @@ dmcgym @ git+https://github.com/ikostrikov/dmcgym
 moviepy
 imageio
 d4rl @ git+https://github.com/Farama-Foundation/d4rl@master#egg=d4rl
+
+viperx_sim
