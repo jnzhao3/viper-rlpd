@@ -47,7 +47,14 @@ def _share_encoder(source, target):
             replacers[k] = v
 
     # Use critic conv layers in actor:
+    # I changed this part
+    # try:
+    # import ipdb; ipdb.set_trace()
     new_params = target.params.copy(add_or_replace=replacers)
+    # new_params = target.params.copy(replacers)
+    # except:
+    #     from flax.core.frozen_dict import FrozenDict
+    #     new_params = FrozenDict(target.params).copy(add_or_replace=replacers)
     return target.replace(params=new_params)
 
 
@@ -86,6 +93,10 @@ class DrQLearner(SACLearner):
         """
         An implementation of the version of Soft-Actor-Critic described in https://arxiv.org/abs/1812.05905
         """
+
+        # # added, might remove
+        # self.pixel_keys = pixel_keys
+        # self.mlp_keys = mlp_keys
 
         action_dim = action_space.shape[-1]
         observations = observation_space.sample()
@@ -177,6 +188,8 @@ class DrQLearner(SACLearner):
             critic=critic,
             target_critic=target_critic,
             temp=temp,
+            # pixel_keys=pixel_keys, # possibly remove
+            # mlp_keys=mlp_keys, # possibly remove
             target_entropy=target_entropy,
             tau=tau,
             discount=discount,
@@ -190,6 +203,11 @@ class DrQLearner(SACLearner):
     def update(self, batch: DatasetDict, utd_ratio: int):
         new_agent = self
 
+        # if "pixels" not in batch["next_observations"]:
+        # if self.pixel_keys[0] not in batch["next_observations"]:
+        #     batch = _unpack(batch)
+
+        # fixed
         if "pixels" not in batch["next_observations"]:
             batch = _unpack(batch)
 

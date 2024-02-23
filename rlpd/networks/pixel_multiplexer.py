@@ -37,8 +37,10 @@ class PixelMultiplexer(nn.Module):
                 # The last dim is always for stacking, even if it's 1.
                 x = jnp.concatenate([x, observations[depth_key]], axis=-2)
 
+            # import ipdb; ipdb.set_trace()
             x = jnp.reshape(x, (*x.shape[:-2], -1))
 
+            # import ipdb; ipdb.set_trace()
             x = self.encoder_cls(name=f"encoder_{i}")(x)
 
             if self.stop_gradient:
@@ -53,6 +55,7 @@ class PixelMultiplexer(nn.Module):
         # 2024-02-19 CHANGES
         for mlp_key in self.mlp_keys:
             # arr = observations[mlp_key][0]
+            # import ipdb; ipdb.set_trace()
             arr = observations[mlp_key]
             xs.append(arr)
 

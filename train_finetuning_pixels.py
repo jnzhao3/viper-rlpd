@@ -1,6 +1,8 @@
 #! /usr/bin/env python
 import dmcgym
 import gym
+from gym.wrappers.pixel_observation import PixelObservationWrapper
+
 import numpy as np
 import tqdm
 from absl import app, flags
@@ -91,7 +93,7 @@ def main(_):
 
     action_repeat = FLAGS.action_repeat or PLANET_ACTION_REPEAT.get(FLAGS.env_name, 2)
 
-    def wrap(env):
+    def wrap(env, pixels_only=True):
         if "quadruped" in FLAGS.env_name:
             camera_id = 2
         else:
@@ -102,16 +104,42 @@ def main(_):
             image_size=FLAGS.image_size,
             num_stack=FLAGS.num_stack,
             camera_id=camera_id,
+            pixels_only=pixels_only,
         )
-
-    # env = gym.make(FLAGS.env_name) # ORIGINAL
-    from viperx_sim import env_reg # VIPER
-    env = env_reg.make_reach_task_env()
-    # END CHANGES
-
+    
     # env, pixel_keys = wrap(env) # ORIGINAL
-    pixel_keys = ('camera_0',) # VIPER
-    mlp_keys = ('end_effector_positions', 'joint_positions') # VIPER
+    if FLAGS.env_name == 'viperx':
+        pixel_keys = ('camera_0',) # VIPER
+        # env, pixel_keys = wrap_viper_pixels(env, action_repeat, pixel_keys=pixel_keys) # VIPER
+        mlp_keys = ('end_effector_positions', 'joint_positions') # VIPER
+
+        # env = gym.make(FLAGS.env_name) # ORIGINAL
+        from viperx_sim import env_reg # VIPER
+        env = env_reg.make_reach_task_env()
+
+        env, pixel_keys = wrap(env, False) # VIPER=
+
+        import pickle # VIPER
+        ds = pickle.load(open('viperx_replaybuffer.pkl', 'rb'))
+
+        eval_env = env_reg.make_reach_task_env() # VIPER
+        eval_env, _ = wrap(eval_env)
+    else:
+        # pixel_keys = ("pixels",)
+        
+        env = gym.make(FLAGS.env_name)
+        env, pixel_keys = wrap(env) # VIPER=
+        mlp_keys = ()
+        ds = VD4RLDataset( # ORIGINAL
+            env,
+            FLAGS.dataset_level,
+            pixel_keys=pixel_keys,
+            capacity=FLAGS.dataset_size,
+            dataset_path=FLAGS.dataset_path,
+        )
+        eval_env = gym.make(FLAGS.env_name) # ORIGINAL
+        eval_env, _ = wrap(eval_env)
+        # env, pixel_keys = wrap(env) # VIPER=
 
     env = gym.wrappers.RecordEpisodeStatistics(env, deque_size=1)
     if FLAGS.save_video:
@@ -125,8 +153,8 @@ def main(_):
     #     capacity=FLAGS.dataset_size,
     #     dataset_path=FLAGS.dataset_path,
     # )
-    import pickle # VIPER
-    ds = pickle.load(open('viperx_replaybuffer.pkl', 'rb'))
+    # import pickle # VIPER
+    # ds = pickle.load(open('viperx_replaybuffer.pkl', 'rb'))
 
     if FLAGS.offline_ratio == 0:
         ds_iterator = None
@@ -139,9 +167,10 @@ def main(_):
         )
 
     # eval_env = gym.make(FLAGS.env_name) # ORIGINAL
+    # eval_env = env_reg.make_reach_task_env() # VIPER
     # eval_env, _ = wrap(eval_env)
-    # eval_env.seed(FLAGS.seed + 42)
-    eval_env = env_reg.make_reach_task_env() # VIPER
+    # # eval_env.seed(FLAGS.seed + 42)
+    # eval_env = env_reg.make_reach_task_env() # VIPER
 
     replay_buffer_size = FLAGS.replay_buffer_size or FLAGS.max_steps // action_repeat
     if FLAGS.memory_efficient_replay_buffer:
@@ -199,12 +228,13 @@ def main(_):
             action, agent = agent.sample_actions(observation)
 
         # import ipdb; ipdb.set_trace()
-        # try:
-        next_observation, reward, done, info = env.step(action)
+        try:
+            next_observation, reward, done, info = env.step(action)
 
-        # except Exception as e:
-        #     print(e)
-        #     print("Error with action: ", action)
+        except Exception as e:
+            print(e)
+            print("Error with action: ", action)
+            import ipdb; ipdb.set_trace()
         #     continue
         # next_observation = next_observation['camera_0']
         # next_observation = list(next_observation.values())
