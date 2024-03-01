@@ -120,10 +120,10 @@ def main(_):
         env, pixel_keys = wrap(env, False) # VIPER=
 
         import pickle # VIPER
-        ds = pickle.load(open('viperx_replaybuffer.pkl', 'rb'))
+        # ds = pickle.load(open('viperx_replaybuffer.pkl', 'rb'))
 
         eval_env = env_reg.make_reach_task_env() # VIPER
-        eval_env, _ = wrap(eval_env)
+        eval_env, _ = wrap(eval_env, False)
     else:
         # pixel_keys = ("pixels",)
         
