@@ -111,7 +111,7 @@ def main(_):
     if FLAGS.env_name == 'viperx':
         pixel_keys = ('camera_0',) # VIPER
         # env, pixel_keys = wrap_viper_pixels(env, action_repeat, pixel_keys=pixel_keys) # VIPER
-        mlp_keys = ('end_effector_positions', 'joint_positions') # VIPER
+        mlp_keys = ('target_end_effector_positions', 'end_effector_positions', 'joint_positions') # VIPER
 
         # env = gym.make(FLAGS.env_name) # ORIGINAL
         from viperx_sim import env_reg # VIPER
