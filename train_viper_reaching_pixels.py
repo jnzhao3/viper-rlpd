@@ -8,6 +8,7 @@ import tqdm
 from absl import app, flags
 from flax.core import FrozenDict
 from ml_collections import config_flags
+import rospy
 
 import wandb
 from rlpd.agents import DrQLearner
@@ -94,6 +95,8 @@ def combine(one_dict, other_dict):
 def main(_):
     wandb.init(project=FLAGS.project_name)
     wandb.config.update(FLAGS)
+    rospy.init_node("viper_pixel_env")
+    rospy.spin()
 
     action_repeat = FLAGS.action_repeat or PLANET_ACTION_REPEAT.get(FLAGS.env_name, 2)
 
