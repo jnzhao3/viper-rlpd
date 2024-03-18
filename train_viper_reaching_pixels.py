@@ -1,0 +1,313 @@
+#! /usr/bin/env python
+import dmcgym
+import gym
+from gym.wrappers.pixel_observation import PixelObservationWrapper
+
+import numpy as np
+import tqdm
+from absl import app, flags
+from flax.core import FrozenDict
+from ml_collections import config_flags
+import rospy
+
+import wandb
+from rlpd.agents import DrQLearner
+from rlpd.data import MemoryEfficientReplayBuffer, ReplayBuffer
+from rlpd.data.vd4rl_datasets import VD4RLDataset
+from rlpd.evaluation import evaluate
+from rlpd.wrappers import WANDBVideo, wrap_pixels, wrap_gym
+
+from rlpd.wrappers.dm2gym import DMCGYM
+from viper_env import ViperX
+# import dmcgym
+
+FLAGS = flags.FLAGS
+
+flags.DEFINE_string("project_name", "rlpd_pixels", "wandb project name.")
+flags.DEFINE_string("env_name", "cheetah-run-v0", "Environment name.")
+flags.DEFINE_string(
+    "dataset_level", "expert", "Dataset level (e.g., random, expert, etc.)."
+)
+flags.DEFINE_string("dataset_path", None, "Path to dataset. If None, uses '~/.vd4rl'.")
+flags.DEFINE_integer("dataset_size", 500_000, "How many samples to load")
+flags.DEFINE_float("offline_ratio", 0.5, "Offline ratio.")
+flags.DEFINE_integer("seed", 42, "Random seed.")
+flags.DEFINE_integer("eval_episodes", 10, "Number of episodes used for evaluation.")
+flags.DEFINE_integer("log_interval", 1000, "Logging interval.")
+flags.DEFINE_integer("eval_interval", 5000, "Eval interval.")
+flags.DEFINE_integer("batch_size", 256, "Mini batch size.")
+flags.DEFINE_integer("max_steps", int(5e5), "Number of training steps.")
+flags.DEFINE_integer(
+    "start_training", int(1e2), "Number of training steps to start training."
+)
+flags.DEFINE_integer("image_size", 64, "Image size.")
+flags.DEFINE_integer("num_stack", 3, "Stack frames.")
+flags.DEFINE_integer(
+    "replay_buffer_size", None, "Number of training steps to start training."
+)
+flags.DEFINE_integer(
+    "action_repeat", None, "Action repeat, if None, uses 2 or PlaNet default values."
+)
+flags.DEFINE_boolean("tqdm", True, "Use tqdm progress bar.")
+flags.DEFINE_boolean(
+    "memory_efficient_replay_buffer", True, "Use a memory efficient replay buffer."
+)
+flags.DEFINE_boolean("save_video", False, "Save videos during evaluation.")
+flags.DEFINE_string("save_dir", None, "Directory to save checkpoints.")
+flags.DEFINE_integer("utd_ratio", 1, "Update to data ratio.")
+config_flags.DEFINE_config_file(
+    "config",
+    "configs/drq_config.py",
+    "File path to the training hyperparameter configuration.",
+    lock_config=False,
+)
+
+PLANET_ACTION_REPEAT = {
+    "cartpole-swingup-v0": 8,
+    "reacher-easy-v0": 4,
+    "cheetah-run-v0": 4,
+    "finger-spin-v0": 2,
+    "ball_in_cup-catch-v0": 4,
+    "walker-walk-v0": 2,
+}
+
+
+def combine(one_dict, other_dict):
+    combined = {}
+
+    for k, v in one_dict.items():
+        if isinstance(v, FrozenDict):
+            if len(v) == 0:
+                combined[k] = v
+            else:
+                combined[k] = combine(v, other_dict[k])
+        else:
+            tmp = np.empty(
+                (v.shape[0] + other_dict[k].shape[0], *v.shape[1:]), dtype=v.dtype
+            )
+            tmp[0::2] = v
+            tmp[1::2] = other_dict[k]
+            combined[k] = tmp
+
+    return FrozenDict(combined)
+
+
+def main(_):
+    wandb.init(project=FLAGS.project_name)
+    wandb.config.update(FLAGS)
+    rospy.init_node("viper_pixel_env")
+    rospy.spin()
+
+    action_repeat = FLAGS.action_repeat or PLANET_ACTION_REPEAT.get(FLAGS.env_name, 2)
+
+    def wrap(env, pixels_only=True):
+        if "quadruped" in FLAGS.env_name:
+            camera_id = 2
+        else:
+            camera_id = 0
+        return wrap_pixels(
+            env,
+            action_repeat=action_repeat,
+            image_size=FLAGS.image_size,
+            num_stack=FLAGS.num_stack,
+            camera_id=camera_id,
+            pixels_only=pixels_only,
+        )
+    
+    # env, pixel_keys = wrap(env) # ORIGINAL
+    # if FLAGS.env_name == 'viperx':
+    pixel_keys = ('image',) # VIPER
+    # env, pixel_keys = wrap_viper_pixels(env, action_repeat, pixel_keys=pixel_keys) # VIPER
+    mlp_keys = ('goal', 'proprio') # VIPER
+    # TODO: change these keys to actually reflect the observation space
+    # env = gym.make(FLAGS.env_name) # ORIGINAL
+    # from viperx_sim import env_reg # VIPER?
+    # env = env_reg.make_reach_task_env()
+    env = ViperX(pixels=True)
+    env = DMCGYM(env)
+    # env = GymFromDMEnv(env)
+    
+
+    env, pixel_keys = wrap(env, False) # VIPER
+    env.seed(FLAGS.seed)
+
+    # import pickle # VIPER
+    # ds = pickle.load(open('viperx_replaybuffer.pkl', 'rb'))
+
+    # eval_env = env_reg.make_reach_task_env() # VIPER
+    # eval_env, _ = wrap(eval_env, False)
+    # else:
+    #     # pixel_keys = ("pixels",)
+        
+    #     env = gym.make(FLAGS.env_name)
+    #     env, pixel_keys = wrap(env) # VIPER=
+    #     mlp_keys = ()
+    #     ds = VD4RLDataset( # ORIGINAL
+    #         env,
+    #         FLAGS.dataset_level,
+    #         pixel_keys=pixel_keys,
+    #         capacity=FLAGS.dataset_size,
+    #         dataset_path=FLAGS.dataset_path,
+    #     )
+    #     eval_env = gym.make(FLAGS.env_name) # ORIGINAL
+    #     eval_env, _ = wrap(eval_env)
+        # env, pixel_keys = wrap(env) # VIPER=
+
+    env = gym.wrappers.RecordEpisodeStatistics(env, deque_size=1)
+    if FLAGS.save_video:
+        env = WANDBVideo(env)
+    env.seed(FLAGS.seed)
+
+    # ds = VD4RLDataset( # ORIGINAL
+    #     env,
+    #     FLAGS.dataset_level,
+    #     pixel_keys=pixel_keys,
+    #     capacity=FLAGS.dataset_size,
+    #     dataset_path=FLAGS.dataset_path,
+    # )
+    # import pickle # VIPER
+    # ds = pickle.load(open('viperx_replaybuffer.pkl', 'rb'))
+
+    if FLAGS.offline_ratio == 0:
+        ds_iterator = None
+    # else:
+    #     ds_iterator = ds.get_iterator(
+    #         sample_args={
+    #             "batch_size": int(FLAGS.batch_size * FLAGS.utd_ratio * FLAGS.offline_ratio),
+    #             "pack_obs_and_next_obs": True,
+    #         }
+    #     )
+    # NO OFFLINE DATA FOR NOW
+
+    # eval_env = gym.make(FLAGS.env_name) # ORIGINAL
+    # eval_env = env_reg.make_reach_task_env() # VIPER
+    # eval_env, _ = wrap(eval_env)
+    # # eval_env.seed(FLAGS.seed + 42)
+    # eval_env = env_reg.make_reach_task_env() # VIPER
+
+    replay_buffer_size = FLAGS.replay_buffer_size or FLAGS.max_steps // action_repeat
+    if FLAGS.memory_efficient_replay_buffer:
+        replay_buffer = MemoryEfficientReplayBuffer(
+            env.observation_space, env.action_space, replay_buffer_size, pixel_keys=pixel_keys
+        ) # VIPER
+
+        # replay_buffer = MemoryEfficientReplayBuffer(
+        #     env.observation_space, env.action_space, replay_buffer_size, pixel_keys=pixel_keys
+        # ) # ORIGINAL
+        replay_buffer_iterator = replay_buffer.get_iterator(
+            sample_args={
+                "batch_size": int(
+                    FLAGS.batch_size * FLAGS.utd_ratio * (1 - FLAGS.offline_ratio)
+                ),
+                "pack_obs_and_next_obs": True,
+            }
+        )
+    else:
+        replay_buffer = ReplayBuffer(
+            env.observation_space, env.action_space, replay_buffer_size
+        )
+        replay_buffer_iterator = replay_buffer.gerator(
+            sample_args={
+                "batch_size": int(
+                    FLAGS.batch_size * FLAGS.utd_ratio * (1 - FLAGS.offline_ratio)
+                ),
+            }
+        )
+    # import ipdb; ipdb.set_trace()
+    replay_buffer.seed(FLAGS.seed)
+
+    # Crashes on some set_itetups if agent is created before replay buffer.
+    kwargs = dict(FLAGS.config)
+    model_cls = kwargs.pop("model_cls")
+    agent = globals()[model_cls].create(
+        FLAGS.seed,
+        env.observation_space,
+        env.action_space,
+        pixel_keys=pixel_keys,
+        mlp_keys=mlp_keys,
+        **kwargs,
+    )
+
+    observation, done = env.reset(), False
+    # observation = observation["pixels"]
+    for i in tqdm.tqdm(
+        range(1, FLAGS.max_steps // action_repeat + 1),
+        smoothing=0.1,
+        disable=not FLAGS.tqdm,
+    ):
+        if i < FLAGS.start_training:
+            action = env.action_space.sample()
+        else:
+            action, agent = agent.sample_actions(observation)
+
+        # import ipdb; ipdb.set_trace()
+        try:
+            next_observation, reward, done, info = env.step(action)
+
+        except Exception as e:
+            print(e)
+            print("Error with action: ", action)
+        #     continue
+        # next_observation = next_observation['camera_0']
+        # next_observation = list(next_observation.values())
+        # next_observation = np.array(next_observation.values())
+        # next_observation = next_observation
+
+        if not done or "TimeLimit.truncated" in info:
+            mask = 1.0
+        else:
+            mask = 0.0
+
+
+        replay_buffer.insert(
+            dict(
+                observations=observation,
+                actions=action,
+                rewards=reward,
+                masks=mask,
+                dones=done,
+                next_observations=next_observation,
+            )
+        )
+        observation = next_observation
+
+        if done:
+            observation, done = env.reset(), False
+            for k, v in info["episode"].items():
+                decode = {"r": "return", "l": "length", "t": "time"}
+                wandb.log({f"training/{decode[k]}": v}, step=i * action_repeat)
+
+        if i >= FLAGS.start_training:
+            online_batch = next(replay_buffer_iterator)
+            if ds_iterator is not None:
+                offline_batch = next(ds_iterator)
+                batch = combine(offline_batch, online_batch)
+            else:
+                batch = online_batch
+            agent, update_info = agent.update(batch, FLAGS.utd_ratio)
+
+            if i % FLAGS.log_interval == 0:
+                for k, v in update_info.items():
+                    wandb.log({f"training/{k}": v}, step=i * action_repeat)
+
+        # if i % FLAGS.eval_interval == 0:
+        #     eval_info = evaluate(
+        #         agent,
+        #         eval_env,
+        #         num_episodes=FLAGS.eval_episodes,
+        #         save_video=FLAGS.save_video,
+        #     )
+        #     for k, v in eval_info.items():
+        #         wandb.log({f"evaluation/{k}": v}, step=i * action_repeat)
+
+        #     if FLAGS.save_dir is not None:
+        #         from flax.training import checkpoints
+
+        #         checkpoints.save_checkpoint(
+        #             FLAGS.save_dir, target=agent, step=i * action_repeat, overwrite=True
+        #         )
+        # NO EVALUATION FOR NOW
+
+
+if __name__ == "__main__":
+    app.run(main)
