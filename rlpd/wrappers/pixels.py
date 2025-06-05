@@ -56,7 +56,7 @@ def wrap_pixels(
 
     env = UniversalSeed(env)
     env = gym.wrappers.RescaleAction(env, -1, 1)
-
+    import ipdb; ipdb.set_trace()
     env = PixelObservationWrapper(
         env,
         pixels_only=pixels_only, # Changed from True

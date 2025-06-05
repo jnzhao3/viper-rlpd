@@ -116,8 +116,11 @@ def main(_):
         # env = gym.make(FLAGS.env_name) # ORIGINAL
         from viperx_sim import env_reg # VIPER
         env = env_reg.make_reach_task_env()
+        
+        import ipdb; ipdb.set_trace()
 
         env, pixel_keys = wrap(env, False) # VIPER=
+        # import ipdb; ipdb.set_trace()
 
         import pickle # VIPER
         # ds = pickle.load(open('viperx_replaybuffer.pkl', 'rb'))
